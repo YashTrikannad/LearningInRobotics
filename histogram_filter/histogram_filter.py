@@ -7,7 +7,6 @@ class HistogramFilter(object):
     def action_model(self, prior, last_action):
 
         prior = np.asarray(prior, dtype=np.float)
-
         if last_action[0] == 1:
             kernel = np.array([0, 0.1, 0.9])
             kernel = np.expand_dims(kernel, axis=0)
