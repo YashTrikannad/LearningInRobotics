@@ -10,7 +10,7 @@ class quaternion_class:
 
     def convert3dto4d(self, w):
         angle = np.linalg.norm(w, axis=0)
-        axis = w/(angle+0.0001)
+        axis = w/(angle+0.00000001)
         quaternion = np.vstack((np.cos(angle / 2), axis*np.sin(angle / 2)))
         return quaternion
 
@@ -38,10 +38,20 @@ class ukf(quaternion_class):
     def Xi_calculation(self, root, statek_1):
         q = self.convert3dto4d(root[0:3, :])
         q_k = self.quaternion_multiplication(statek_1[0:4], q)
-        statek_1 = np.transpose(np.repeat(np.reshape(statek_1, (np.size(statek_1[0]), -1)), 12, axis=0))
-        w_k = root[3:, ]+statek_1[4:, ]
+        statek_1_repeated = np.transpose(np.repeat(np.reshape(statek_1, (np.size(statek_1[0]), -1)), 12, axis=0))
+        w_k = root[3:, ]+statek_1_repeated[4:, ]
         x_k = np.vstack((q_k, w_k))
+        x_k = np.hstack((np.expand_dims(statek_1, axis=1), x_k))
         return x_k
+
+    def Xi_propagation(self, x_k, delta_t):
+        previous_angular = x_k[-3:]
+        angle = np.linalg.norm(previous_angular, axis=0)*delta_t
+        axis = previous_angular/(angle+0.00000001)
+        quat_delta = np.vstack((np.cos(angle / 2), axis * np.sin(angle / 2)))
+        q = self.quaternion_multiplication(x_k[:4, :], quat_delta)
+        x_predicted = np.vstack((q, previous_angular))
+        return x_predicted
 
 
 
