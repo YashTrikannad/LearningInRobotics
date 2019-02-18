@@ -30,7 +30,7 @@ class QuaternionClass:
         y = np.array([w0 * y1 - x0 * z1 + y0 * w1 + z0 * x1])
         z = np.array([w0 * z1 + x0 * y1 - y0 * x1 + z0 * w1])
         mul = np.vstack((w, x, y, z))
-        # mul = mul/(np.linalg.norm(mul, axis=0))
+        mul = mul/(np.linalg.norm(mul, axis=0))
         return mul
 
     def quaternion_inverse(self, q):
