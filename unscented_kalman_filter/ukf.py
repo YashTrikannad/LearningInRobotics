@@ -1,117 +1,97 @@
 import numpy as np
+from unscented_kalman_filter.quaternion import QuaternionClass
 
-class quaternion_class:
 
-    def convert4dto3d(self, q):
-        q = np.clip(q, -1, 1)
-        theta = np.expand_dims(2*np.arccos(q[0]), axis=0)
-        theta = np.repeat(theta, 3, axis=0)
-        rot_vector = (theta / (np.sin((theta+0.00001) / 2))) * q[1:, :]
-        return rot_vector
+class Ukf_base_class(QuaternionClass):
 
-    def convert3dto4d(self, w):
-        angle = np.linalg.norm(w, axis=0)
-        axis = w/(angle+0.00000001)
-        quaternion = np.vstack((np.cos(angle / 2), axis*np.sin(angle / 2)))
-        return quaternion
+    def __init__(self):
+        self.x_cap_k_1 = np.array([1/2, 1/2, 1/2, 1/2, 1, 1, 1])  # State Vector at k-1
+        self.x_cap_k = np.zeros_like(self.x_cap_k_1)
+        self.P = np.eye(6)  # Covariance Matrix for State Update
+        self.Q = np.eye(6)  # Noise Matrix for State Update
+        self.R = np.eye(3)  # Noise Matrix for Measurement Update
+        self.Pk_ = np.zeros_like(self.P)    # Covariance Matrix for Yi
+        self.Wi = np.array([])    # Columns are Process Noise vectors of Sigma Points
+        self.Wi6d = np.array([])  # For Set Yi
+        self.Xi = np.array([])    # Sigma Points
+        self.Yi = np.array([])    # Transformed Points
+        self.Zi = np.array([])    # Set Zi for Measurement
+        self.zk_ = np.array([])
+        self.e_i = np.array([])
+        self.innovation = np.array([])
 
-    def convert3dto4done(self, w):
-        angle = np.linalg.norm(w, axis=0)
-        axis = w/(angle+0.00000001)
-        quaternion = np.hstack((np.array(np.cos(angle / 2)), axis*np.sin(angle / 2)))
-        return quaternion
 
-    def quaternion_multiplication(self, q0_vec, q1_vec):
-        w0, x0, y0, z0 = q0_vec[0], q0_vec[1], q0_vec[2], q0_vec[3]
-        w1, x1, y1, z1 = q1_vec[0], q1_vec[1], q1_vec[2], q1_vec[3]
-        w = np.array([w0 * w1 - x0 * x1 - y0 * y1 - z0 * z1])
-        x = np.array([w0 * x1 + x0 * w1 + y0 * z1 - z0 * y1])
-        y = np.array([w0 * y1 + y0 * w1 + z0 * x1 - x0 * z1])
-        z = np.array([w0 * z1 + z0 * w1 + x0 * y1 - y0 * x1])
-        result = np.vstack((w, x, y, z))
-        result = result/(np.linalg.norm(result, axis=0))
-        return result
+class process(Ukf_base_class):
 
-    def quaternion_inverse(self, q):
-        q_inverse = np.array([q[0], -q[1], -q[2], -q[3]])
-        mag = np.linalg.norm(q)
-        return q_inverse/mag
+    def sigma_w_calculation(self):
+        root = np.sqrt(12)*(np.linalg.cholesky(self.P + self.Q))
+        self.Wi = np.hstack((root, -root))
 
-class ukf(quaternion_class):
+    def xi_calculation(self):
+        q = self.convert3dto4d(self.Wi[0:3, :])
+        q_k = self.quaternion_multiplication(self.x_cap_k_1[0:4], q)
+        x_cap_k_1_repeated = np.transpose(np.repeat(np.reshape(self.x_cap_k_1, (7, -1)), 12, axis=0))
+        w_k = self.Wi[3:, :]+x_cap_k_1_repeated[4:, :]
+        self.Xi = np.vstack((q_k, w_k))
 
-    def initialize_P_matrix(self, n):
-        return np.eye(n)
-
-    def sigma_w_calculation(self, p, q):
-        root = np.sqrt(2)*(np.linalg.cholesky(p+q))
-        root = np.hstack((root, -root))
-        return root
-
-    def Xi_calculation(self, root, statek_1):
-        q = self.convert3dto4d(root[0:3, :])
-        q_k = self.quaternion_multiplication(statek_1[0:4], q)
-        statek_1_repeated = np.transpose(np.repeat(np.reshape(statek_1, (np.size(statek_1[0]), -1)), 12, axis=0))
-        w_k = root[3:, ]+statek_1_repeated[4:, ]
-        x_k = np.vstack((q_k, w_k))
-        return x_k
-
-    def Xi_propagation(self, x_k, delta_t):
-        previous_angular = x_k[-3:]
+    def xi_propagation(self, delta_t):
+        previous_angular = self.Xi[-3:]
         angle = np.linalg.norm(previous_angular, axis=0)*delta_t
-        axis = previous_angular/(angle+0.00000001)
-        quat_delta = np.vstack((np.cos(angle / 2), axis * np.sin(angle / 2)))
-        q = self.quaternion_multiplication(x_k[:4, :], quat_delta)
-        x_predicted = np.vstack((q, previous_angular))
-        return x_predicted
+        axis = np.divide(previous_angular, angle+0.00000001)
+        q_delta = np.vstack((np.cos(angle / 2), axis * np.sin(angle / 2)))
+        q = self.quaternion_multiplication(self.Xi[:4, :], q_delta)
+        self.Yi = np.vstack((q, previous_angular))
 
-    def apriori_mean_estimate(self, Yi, xk_1):
-        omega_i = Yi[4:, :]
-        q_i = Yi[:4, :]
+    def apriori_mean_estimate(self):
+        omega_i = self.Yi[4:, :]
+        q_i = self.Yi[:4, :]
 
-        x_cap_k = np.zeros((7, 1))
-        x_cap_k[4:] = np.expand_dims(np.sum(omega_i, axis=1), axis=1) / 12
+        self.x_cap_k = np.zeros((7, 1))
+        self.x_cap_k[4:] = np.expand_dims(np.sum(omega_i, axis=1), axis=1) / 12
 
-        q_t = xk_1[:4]
-        e_i = np.zeros((4, 12))
+        q_t = self.x_cap_k_1[:4]
+        self.e_i = np.zeros((4, 12))
+
         for t in range(5):
             for i in range(12):
-                e_i[:, i] = self.quaternion_multiplication(q_i[:, i], self.quaternion_inverse(q_t)).squeeze()
-            e_i_ = self.convert4dto3d(e_i)
+                self.e_i[:, i] = self.quaternion_multiplication(q_i[:, i], self.quaternion_inverse(q_t)).squeeze()
+            e_i_ = self.convert4dto3d(self.e_i)
             e_vect = np.sum(e_i_, axis=1) / 12
             e = self.convert3dto4done(e_vect)
             q_t = self.quaternion_multiplication(e, q_t)
 
-        x_cap_k[:4] = q_t
-        return x_cap_k, e_i_
+        self.x_cap_k[:4] = q_t
 
-    def covariance_Yi(self, xk_, Yi, rw):
-        xk__repeat = np.repeat(np.expand_dims(xk_, axis=1), 12, axis=1)
-        Wi7d = Yi - xk__repeat
-        Wi6d = np.vstack((self.convert4dto3d(Wi7d[0:4, :]), Wi7d[4:, ]))
-        Wi6d[:3, :] = rw
-        Pk_ = Wi6d.dot(np.transpose(Wi6d))/12
-        return Pk_, Wi6d
+    def covariance_yi(self):
+        xk__repeat = np.repeat(np.expand_dims(self.x_cap_k, axis=1), 12, axis=1)
+        Wi7d = self.Yi - xk__repeat
+        self.Wi6d = np.vstack((self.convert4dto3d(Wi7d[0:4, :]), Wi7d[4:, ]))
+        self.Wi6d[:3, :] = self.e_i
+        self.Pk_ = self.Wi6d.dot(np.transpose(self.Wi6d))/12
 
-    def getMeasurements(self, Yi, sensor = "gyro"):
+
+class MeasurementModel(Ukf_base_class):
+
+    def getMeasurements(self, sensor="gyro"):
 
         if sensor == "gyro":
-            Z_i = Yi[4:, :]
+            Z_i = self.Yi[4:, :]
         else:
             return
 
         zk_ = np.sum(Z_i, axis=1)/12
-        innovation = Z_i - np.expand_dims(zk_, axis=1)
+        self.innovation = Z_i - np.expand_dims(zk_, axis=1)
 
-        return zk_, Z_i, innovation
+        return zk_, Z_i
 
-    def getMeasurementCovariance(self, zk_, Zi, R):
-        Wz = Zi - np.expand_dims(zk_, axis=1)
+    def getMeasurementCovariance(self):
+        Wz = self.Zi - np.expand_dims(self.zk_, axis=1)
         Pzz = np.dot(Wz, np.transpose(Wz))
-        Pvv = Pzz + R
+        Pvv = Pzz + self.R
         return Pvv
 
-    def CrossCorrelation(self, Wi_, Zi, zk_):
-        return np.dot(Wi_, np.transpose(Zi-np.expand_dims(zk_,axis=1)))
+    def CrossCorrelation(self):
+        return np.dot(self.Wi6d, np.transpose(self.Zi-np.expand_dims(self.zk_, axis=1)))
 
     def KalmanGain(self, Pxz, Pvv, xk_, vk, Pk_):
         Kk = np.dot(Pxz, np.linalg.inv(Pvv))
@@ -119,12 +99,22 @@ class ukf(quaternion_class):
         Pk = Pk_ - np.dot(Kk, Pvv, np.transpose(Kk))
 
 
+class Model(MeasurementModel, process):
 
+    def estimate_process_update(self, delta_time):
+        self.sigma_w_calculation()
+        self.xi_calculation()
+        self.xi_propagation(delta_time)
+        self.apriori_mean_estimate()
+        self.covariance_yi()
 
+    def measurement_update(self):
+        self.getMeasurements("gyro")
+        self.getMeasurementCovariance()
+        self.CrossCorrelation()
 
-
-
-
-    
-
-
+        # Measurement Model
+        # zk_, Z_i, vk = u.getMeasurements(Yi, "gyro")
+        # Pvv = u.getMeasurementCovariance(zk_, Z_i, R)
+        # Pxz = u.CrossCorrelation(Wi6d_, Z_i, zk_)
+        # u.KalmanGain(Pxz, Pvv, xk_, vk, Pk_)
