@@ -17,16 +17,16 @@ def find_biases(vicon_data):
 
     euler_angles = find_RPY(vicon_rots)
 
-    plt.figure()
-    plt.plot(np.squeeze(timestamps), euler_angles[0, :])
-    plt.show()
+    # plt.figure()
+    # plt.plot(np.squeeze(timestamps), euler_angles[0, :])
+    # plt.show()
+    #
+    # plt.figure()
+    # plt.plot(np.squeeze(timestamps), euler_angles[1, :])
+    # plt.show()
 
     plt.figure()
     plt.plot(np.squeeze(timestamps), euler_angles[1, :])
-    plt.show()
-
-    plt.figure()
-    plt.plot(np.squeeze(timestamps), euler_angles[2, :])
     plt.show()
 
     print("Finding Bias")
